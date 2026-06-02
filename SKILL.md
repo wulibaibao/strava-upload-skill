@@ -33,18 +33,22 @@ pip install requests -q --break-system-packages
 
 上传成功后**立即抓取活动详情**并报告关键指标，不要只说"上传成功"。
 
-**自动标题格式（骑行，06-01 起固定）：**
-只用心率区间美化名称作为标题，**不加时间/里程/地点**：
-- Z1: < 120 bpm → 热身区
-- Z2: 120–140 bpm → 轻松区
-- Z3: 140–152 bpm → 马拉松区
-- Z4: 152–164 bpm → 乳酸阈值区
-- Z5: > 164 bpm → 极限区
+**自动标题格式（骑行，06-01 起固定，06-02 修订阈值算法）：**
+只用心率区间美化名称作为标题，**不加时间/里程/地点**。判断依据见 `references/hr-zone-absolute-threshold.md`：
 
-例：avg_hr=141, max_hr=166 → Z3 → 标题「Z3 · 马拉松区」
+| 区间 | avg_hr 范围 | 标题 |
+|---|---|---|
+| Z1 | < 120 bpm | Z1 轻松区 |
+| Z2 | 120–139 bpm | Z2 脂肪燃烧区 |
+| Z3 | 140–151 bpm | Z3 有氧耐力区 |
+| Z4 | 152–163 bpm | Z4 乳酸阈值区 |
+| Z5 | ≥ 164 bpm | Z5 最大摄氧区 |
+
+例：avg_hr=141 → Z3 → 标题「Z3 有氧耐力区」
 
 **修改记录：**
 - 06-01：骑行标题从「06-01 西安晨骑 54km」改为只用心率区间名称。用户明确说"不需要加时间/里程/位置，只需要美化一下心率区间"。`strava-upload.py` 的 `get_title()` 已同步更新（删除了 ride_time 前缀）。
+- **06-02：修复心率区间判断 bug——从 max_hr 百分比法改为绝对心率阈值法。** 旧逻辑 `avg_hr / max_hr` 在 max_hr 偏低时（如轻松骑 max_hr=154）会高估强度（avg 134 → 87% → 误判 Z4）。新逻辑按绝对阈值 120/140/152/164 划分。已批量修正 06-01 早（avg 141→Z3）和 06-02 早（avg 134→Z2）两条已上传活动标题。详见 `references/hr-zone-absolute-threshold.md`。
 
 **修改已上传活动的标题：**
 ```python
@@ -53,10 +57,40 @@ tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
 r = requests.patch(
     f'https://www.strava.com/api/v3/activities/{activity_id}',
     headers={'Authorization': f'Bearer {tok["access_token"]}'},
-    json={'name': 'Z4 · 乳酸阈值区'}
+    json={'name': 'Z3 有氧耐力区'}  # 改这里的区间名
 )
 ```
 返回 200 + 完整 activity 对象即成功。
+
+### 标题修正流程（标题算法变更后必做）
+
+当 `get_title()` / `get_hr_zone()` 这类自动标题逻辑被修改后，**之前已经上传的活动标题不会自动更新**。两种处理方式：
+
+**方式 A：批量 PATCH（推荐，省事）**
+
+```python
+import json, requests
+tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+headers = {'Authorization': f'Bearer {tok["access_token"]}'}
+
+# 从 strava-upload.py 重跑分析得出新标题，然后批量改
+fixes = [
+    (18735826730, 'Z3 有氧耐力区'),  # activity_id, new_name
+    (18748867877, 'Z2 脂肪燃烧区'),
+]
+for aid, new_name in fixes:
+    r = requests.patch(f'https://www.strava.com/api/v3/activities/{aid}',
+                       headers=headers, json={'name': new_name})
+    print(f'{"✅" if r.status_code == 200 else "❌"} {aid} → {new_name}')
+```
+
+**方式 B：删除重传（不推荐）**
+
+- 当前 token scope 没有 `activity:delete`（见下方"API Token 缺少 activity:delete 权限"），必须手动去 Strava 网页删除
+- 删除后用 `python3 strava-upload.py` 重新上传即可
+- **缺点**：丢失原活动的 kudos/comments，重传会重新触发 Strava 去重检测
+
+**经验（06-02）：** 心率区间阈值从百分比法改为绝对阈值法后，已上传的 2 条活动（06-01 早 / 06-02 早）用方式 A 各发一次 PATCH 就改完了，不到 30 秒。**优先用方式 A**。
 
 ```python
 import json, requests
@@ -243,39 +277,35 @@ python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit 
 
 `/home/agentuser/strava-upload.py`
 
-## Skill 打包导出工作流（2026-06-01 验证）
+## Skill 打包导出（2026-06-01）
 
-当用户要求"把这个 skill 打包发给我"或类似请求时：
+当用户要求"把这个 skill 打包发给我"或类似请求时，**完整 recipe + 坑 + 投递回退链**见 `references/skill-export-recipe.md`。
 
-**步骤**：
-1. 复制整个 skill 目录到临时位置（避免污染原目录）
-   ```bash
-   rm -rf /tmp/skill-export/<name> && cp -r ~/.hermes/skills/<category>/<name> /tmp/skill-export/
-   ```
-2. 在导出目录根加 `README.md`（快速入门 + 目录树 + 关键文档阅读顺序）
-3. `tar -czf` 打包（**不是 zip**——Linux server 默认没装 zip）：
-   ```bash
-   cd /tmp/skill-export && tar -czf <name>-skill-<date>.tar.gz <name>/
-   ```
-4. 用 `tar -tzf <archive>.tar.gz` 验证所有文件都在
-5. 保存到 `~/strava-uploads/` 作为可投递位置
+核心要点（一句话版）：
+1. `cp -r` 到 /tmp 临时目录 + **`chmod -R a+rX`**（原文件 600 别人读不了）
+2. 加 README.md（5 分钟入门 + 目录树 + 阅读顺序）
+3. **`tar -czf`** 打包（不是 zip——服务器无 zip）
+4. `ls <dir> | sort` 对比原目录（**用 `ls` 不用 `find`**，find 会被隐藏文件误导）
+5. 投递优先级：GitHub 私有 repo > 邮件附件（用 `python3 smtplib` 不用 `send_message`）> IM 文件传输 > 本地路径
 
-**坑**：
-- ❌ `zip -r` → `zip: command not found`（服务器无 zip 包），用 tar.gz 替代
-- ❌ base64 内嵌大文件到消息 → QQ/微信会被截断（>20KB 不可行）
-- ❌ send_message 的 `target=qqbot` 配了 home channel 还报 "No home channel set"——疑似工具 bug，需重启 gateway
-- ❌ send_message 工具的 email 平台**需要 `EMAIL_ADDRESS` 等环境变量**，但 hermes gateway 进程**没有**这些环境变量（只 config.yaml 顶层有，但 send_message 走 `os.getenv` 不读 config.yaml）
+## Hermes 通用陷阱（导出/send_message 时易踩）
 
-**文件发送回退链**（按优先级）：
-1. send_message `target=qqbot` / `target=weixin`（限流时等 5-15 分钟）
-2. 创建 cron job `deliver: email`，prompt 让 agent 把文件作为 MEDIA: 发出（**走 EmailAdapter，用 config.yaml 顶层 EMAIL_*，不需 os.getenv**）—— 实际可行的方案
-3. 保存到 `~/strava-uploads/` + 文字告诉用户本地路径 + scp 提示
+**Compaction 提示词不要回显给用户（2026-06-01 教训）：**
+- 上下文压缩时系统会注入 `[CONTEXT COMPACTION — REFERENCE ONLY] ...` 整块
+- 看到以 `[...]` tag 开头的注入文本（compaction / system note / handoff）→ **当元数据处理**，不转给用户
+- 反例：用户问"怎么样了"时若 compaction 提示恰好注入，我误以为用户在发 compaction 内容、回了一句"这一串能不能不发我了"——用户根本不知道 compaction 这事，**纯属我的错**
 
-**Hermes 邮件双通道陷阱**：
-- `send_message(target="email", ...)` → 用 `os.getenv("EMAIL_*")` → **hermes gateway 进程没这些 env var** → 失败
-- `cronjob.create(deliver="email", ...)` → 走 `gateway.platforms.email.EmailAdapter` → 用 `config.yaml` 顶层 `EMAIL_*` 字段 → **可用**
+**send_message 投递失败链：**
+- ❌ `send_message(target="email")` 在 hermes-gateway 进程内**不可用**（`os.getenv("EMAIL_*")` 取不到，gateway 启动时没注入 env var）
+- ❌ `send_message(target="home")` → "Unknown platform"（home 不是平台名）
+- ❌ `send_message(target="qqbot")` 无 `QQBOT_HOME_CHANNEL` 配 → "No home channel set"
+- ❌ `send_message(target="weixin")` → iLink `rate limited: ret=-2`（5-15 分钟恢复）
+- ✅ 邮件附件：用 `python3 smtplib` + `config.yaml` 顶层 `EMAIL_*`（不走 `os.getenv`）
+- ✅ GitHub repo：用户给 PAT → `curl POST /user/repos` → `git init/push` → **`set-url` 脱敏**
+- ✅ 本地路径：保存到 `~/strava-uploads/` + 文字 + scp 提示
 
-后者是用户"每天能收到邮件"的真正机制。每日 06:00 的「博客调研」任务就是这种用法。
+**Memory 存 PAT 的规矩：** 只存 `ghp_XXXX...末4位` + scope 描述，**绝不存完整 token**。换 PAT 只更新末 4 位。
+
 
 ## 各次骑行 GPS 状态记录
 
@@ -286,6 +316,8 @@ python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit 
 | 05-26 | 53 km | 严重漂移（坐标飞掉） | 需 Encoder 重建 |
 | 05-30 | 144 km | ⚠️ 两段式漂移（前79%偏东0.22°~0.48°，后段偏东0.14°）→ GPX 中介法修复 ✅ | GPX 中介 Encoder 重建，校正后 lon 108.57°~108.95° |
 | 06-01 | 54 km | ✅ 干净（spread lat=0.062°, lon=0.088°，西安城区无漂移） | 直接上传 |
+| 06-02 早 | 54 km | ✅ 干净（spread lat=0.062°, lon=0.088°，西安城区无漂移）。首条触发"duplicate"误报（UTC 跨日），实际是已上传 | 直接上传（先查 status → 已存在则跳过） |
+| 06-02 早 #2 | 53.8 km | ✅ 干净（spread lat=0.057°, lon=0.089°） | 直接上传 |
 
 ## fitdecode 正确用法（多次踩坑，已验证）
 
@@ -385,4 +417,5 @@ if timestamps:
 - `references/magene-c706-gcj02-offset.md` — GCJ-02 系统偏移识别（**2026-06-01 推翻重写**：MAGENE C706 实际输出 GCJ-02，路线恒定方向偏 470-490m；OSM 双向验证是最可靠的诊断方法）
 - `scripts/detect_gcj02_offset.py` — **🆕 GCJ-02 偏移一键诊断（2026-06-01）**：OSM 路网双向投影（WGS-84 vs GCJ-02），输出中位偏差对比。5-10 分钟给出明确结论。用法：`python3 scripts/detect_gcj02_offset.py <file.fit>`
 - `references/strava-gcj02-wgs84-correction.md` — ✅ **新增（2026-05-31 验证）**：复刻 [xqdoo00o/strava_auto](https://github.com/xqdoo00o/strava_auto) 的 GCJ-02→WGS-84 迭代纠偏算法（outOfChina 边界 + _transform + _delta + gcj2wgs），以及 FIT 二进制坐标 patch（Record/Lap/Session/CoursePoint/SegmentPoint）、CRC-16 重建、gzip 压缩上传完整实现
+- `references/hr-zone-absolute-threshold.md` — **🆕 心率区间绝对阈值法（2026-06-02 修订）**：从 max_hr 百分比法改为绝对阈值（120/140/152/164）的原因、bug 案例、修正方法、版本历史。判断心率区间前先看这个
 - `references/fit-method-comparison.md` — ✅ **新增（2026-06-01）**：三种 FIT 修复方法（binary patch / fit-tool update / GPX 中介法）的决策树。给出偏移类型→方法映射、各方法优缺点、决策流程。**遇到 GPS 偏移问题先看这个，再选具体 reference**
