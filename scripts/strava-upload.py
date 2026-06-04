@@ -34,322 +34,206 @@ def save_token(data):
 
 ACTIVITY_TYPES = ["Run", "Ride", "Swim", "Walk", "Hike", "Workout", "WeightTraining", "Yoga"]
 
-# ====== FIT 解析 ======
+# ====== GCJ-02 → WGS-84 坐标纠偏（GPX 中介法）======
+# 用 fitdecode 解析原 FIT → 对每条 record/session/lap 的 position_lat/long 做 gcj2wgs 转换
+# → 用 garmin-fit-sdk Encoder 重建 FIT。绕开 binary patch 字节解析（06-04 验证：FIT data
+# message 不含 msg_num/num_fields 字段，binary parser 根本无法正确识别 record 消息类型）。
+# 副本独立维护在 /home/agentuser/correct_fit_gpx.py（06-04 验证用），主流程统一调用本函数。
 
-def semicircles_to_degrees(s):
-    """FIT 的半圆坐标转十进制度数"""
-    return s * (180.0 / 2**31)
+import math as _math
+from datetime import datetime as _dt, timezone as _tz
 
-def degrees_to_semicircles(d):
-    """十进制度数转 FIT 半圆坐标"""
-    return int(d * (2**31 / 180.0))
+import fitdecode as _fitdecode
+from garmin_fit_sdk import Encoder as _GarminEncoder
+from garmin_fit_sdk.profile import Profile as _FitProfile
 
-# ====== GCJ-02 → WGS84 坐标纠偏（精确迭代版） ======
-# 算法与 https://github.com/xqdoo00o/strava_auto 完全一致
+# 修复 Profile str-key bug（5/30 实战经验：Profile['messages'] 可能是 str key，Encoder 要 int key）
+_FitProfile['messages'] = {int(k): v for k, v in _FitProfile['messages'].items()}
 
-import math as mathlib
+_GCJ_EARTH_R = 6378137.0
+_GCJ_EE = 0.00669342162296594323
+_FIT_EPOCH = _dt(1989, 12, 31, 0, 0, 0, tzinfo=_tz.utc)
 
-EARTH_R = 6378137.0
-EE = 0.00669342162296594323
 
-def outOfChina(lat, lng):
-    """判断坐标是否在中国境外"""
-    if lng < 72.004 or lng > 137.8347:
-        return True
-    if lat < 0.8293 or lat > 55.8271:
-        return True
+def _out_of_china(lat, lng):
+    if lng < 72.004 or lng > 137.8347: return True
+    if lat < 0.8293 or lat > 55.8271: return True
     return False
 
-def _transform(x, y):
-    """计算 GCJ→WGS 偏移量辅助函数"""
+
+def _gcj_transform(x, y):
     xy = x * y
-    absX = mathlib.sqrt(abs(x))
-    xPi = x * mathlib.pi
-    yPi = y * mathlib.pi
-    d = 20.0 * mathlib.sin(6.0 * xPi) + 20.0 * mathlib.sin(2.0 * xPi)
+    abs_x = _math.sqrt(abs(x))
+    x_pi = x * _math.pi
+    y_pi = y * _math.pi
+    d = 20.0 * _math.sin(6.0 * x_pi) + 20.0 * _math.sin(2.0 * x_pi)
     lat = d
     lng = d
-    lat += 20.0 * mathlib.sin(yPi) + 40.0 * mathlib.sin(yPi / 3.0)
-    lng += 20.0 * mathlib.sin(xPi) + 40.0 * mathlib.sin(xPi / 3.0)
-    lat += 160.0 * mathlib.sin(yPi / 12.0) + 320.0 * mathlib.sin(yPi / 30.0)
-    lng += 150.0 * mathlib.sin(xPi / 12.0) + 300.0 * mathlib.sin(xPi / 30.0)
+    lat += 20.0 * _math.sin(y_pi) + 40.0 * _math.sin(y_pi / 3.0)
+    lng += 20.0 * _math.sin(x_pi) + 40.0 * _math.sin(x_pi / 3.0)
+    lat += 160.0 * _math.sin(y_pi / 12.0) + 320.0 * _math.sin(y_pi / 30.0)
+    lng += 150.0 * _math.sin(x_pi / 12.0) + 300.0 * _math.sin(x_pi / 30.0)
     lat *= 2.0 / 3.0
     lng *= 2.0 / 3.0
-    lat += -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * xy + 0.2 * absX
-    lng += 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * xy + 0.1 * absX
+    lat += -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * xy + 0.2 * abs_x
+    lng += 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * xy + 0.1 * abs_x
     return [lat, lng]
 
-def _delta(lat, lng):
-    """计算经纬度差值"""
-    t = _transform(lng - 105.0, lat - 35.0)
-    dLat = t[0]
-    dLng = t[1]
-    radLat = lat / 180.0 * mathlib.pi
-    magic = mathlib.sin(radLat)
-    magic = 1 - EE * magic * magic
-    sqrtMagic = mathlib.sqrt(magic)
-    dLat = (dLat * 180.0) / ((EARTH_R * (1 - EE)) / (magic * sqrtMagic) * mathlib.pi)
-    dLng = (dLng * 180.0) / (EARTH_R / sqrtMagic * mathlib.cos(radLat) * mathlib.pi)
-    return [dLat, dLng]
 
-def gcj2wgs(gcjLat, gjclng):
-    """GCJ-02 精确转换为 WGS-84（迭代法）"""
-    if outOfChina(gcjLat, gjclng):
-        return [gcjLat, gjclng]
-    newLat = gcjLat
-    newLng = gjclng
-    oldLat, oldLng = 0, 0
-    threshold = 1e-6
+def _gcj_delta(lat, lng):
+    t = _gcj_transform(lng - 105.0, lat - 35.0)
+    d_lat, d_lng = t[0], t[1]
+    rad_lat = lat / 180.0 * _math.pi
+    magic = _math.sin(rad_lat)
+    magic = 1 - _GCJ_EE * magic * magic
+    sqrt_magic = _math.sqrt(magic)
+    d_lat = (d_lat * 180.0) / ((_GCJ_EARTH_R * (1 - _GCJ_EE)) / (magic * sqrt_magic) * _math.pi)
+    d_lng = (d_lng * 180.0) / (_GCJ_EARTH_R / sqrt_magic * _math.cos(rad_lat) * _math.pi)
+    return [d_lat, d_lng]
+
+
+def _gcj2wgs(gcj_lat, gcj_lng):
+    if _out_of_china(gcj_lat, gcj_lng): return (gcj_lat, gcj_lng)
+    new_lat, new_lng = gcj_lat, gcj_lng
     for _ in range(30):
-        oldLat = newLat
-        oldLng = newLng
-        d = _delta(newLat, newLng)
-        newLat = gcjLat - d[0]
-        newLng = gjclng - d[1]
-        if max(abs(oldLat - newLat), abs(oldLng - newLng)) < threshold:
-            break
-    return [newLat, newLng]
+        old_lat, old_lng = new_lat, new_lng
+        d = _gcj_delta(new_lat, new_lng)
+        new_lat = gcj_lat - d[0]
+        new_lng = gcj_lng - d[1]
+        if max(abs(old_lat - new_lat), abs(old_lng - new_lng)) < 1e-6: break
+    return (new_lat, new_lng)
 
 
-# ====== FIT 文件坐标纠偏 ======
-# 读取 FIT，修正所有坐标字段后写回（原地修改，不改其他内容）
+def _semi_to_deg(s):
+    return s * (180.0 / 2**31)
 
-def _build_fit_crc_table():
-    """构建 FIT CRC 查表"""
-    table = [0] * 256
-    for i in range(256):
-        crc = i
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0xEDB88320
-            else:
-                crc >>= 1
-        table[i] = crc
-    return table
 
-_FIT_CRC_TABLE = _build_fit_crc_table()
+def _deg_to_semi(d):
+    return int(round(d * (2**31 / 180.0)))
 
-def _fit_crc_update(crc, data):
-    """更新 FIT CRC"""
-    table = _FIT_CRC_TABLE
-    for b in data:
-        crc = table[(crc ^ b) & 0xFF] ^ (crc >> 8)
-    return crc & 0xFFFF
 
-# FIT 消息号定义
-_FIT_MSG_FILE = 0
-_FIT_MSG_FILE_ID = 1
-_FIT_MSG_SESSION = 2
-FIT_MSG_LAP = 19
-FIT_MSG_RECORD = 20
-FIT_MSG_COURSE_POINT = 32
-FIT_MSG_SEGMENT_POINT = 33
-FIT_MSG_SEGMENT_LAP = 34
-FIT_MSG_SESSION = 2
+def _fit_ts(dt):
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return int((dt - _FIT_EPOCH).total_seconds())
 
-# 坐标字段 def_num（来自 FIT profile）
-_FIT_FIELD_POSITION_LAT = 0
-_FIT_FIELD_POSITION_LONG = 1
-_FIT_FIELD_START_POSITION_LAT = 0
-_FIT_FIELD_START_POSITION_LONG = 1
-_FIT_FIELD_END_POSITION_LAT = 2
-_FIT_FIELD_END_POSITION_LONG = 3
-_FIT_FIELD_NEC_LAT = 4
-_FIT_FIELD_NEC_LONG = 5
-_FIT_FIELD_SWC_LAT = 6
-_FIT_FIELD_SWC_LONG = 7
 
-def _patch_fit_message(msg_bytes, records_messages):
-    """在消息字节中 patch 坐标字段"""
-    # FIT 消息结构：
-    #   1B : record header (is_definition=0 for data msg)
-    #   2B  : local message type + reserved + endian
-    #   2B  : global message number
-    #   1B  : field count
-    #   N*B : field definitions (def_num, size, base_type)
-    #   数据
+# 哪些消息哪些字段是坐标
+_COORD_FIELDS = {
+    'record':         ('position_lat', 'position_long'),
+    'session':        ('start_position_lat', 'start_position_long',
+                        'end_position_lat',   'end_position_long',
+                        'nec_lat', 'nec_long', 'swc_lat', 'swc_long'),
+    'lap':            ('start_position_lat', 'start_position_long',
+                        'end_position_lat',   'end_position_long'),
+}
 
-    if len(msg_bytes) < 7:
-        return msg_bytes
+# 消息名 → mesg_num 映射
+_MESG_NUM = {
+    'file_id': 0, 'user_profile': 3, 'bike_profile': 6,
+    'sport': 12,
+    'session': 18, 'lap': 19, 'record': 20,
+    'activity': 34,
+}
+_HANDLED = set(_MESG_NUM.keys())
 
-    header = msg_bytes[0]
-    reserved_endian = msg_bytes[1:3]
-    msg_num = int.from_bytes(msg_bytes[3:5], 'little')
-    num_fields = msg_bytes[5]
 
-    # 只处理我们关心的消息类型
-    coord_fields = []
-    if msg_num == FIT_MSG_RECORD:
-        coord_fields = [(0, _FIT_FIELD_POSITION_LAT), (1, _FIT_FIELD_POSITION_LONG)]
-    elif msg_num == FIT_MSG_SEGMENT_LAP:
-        coord_fields = [
-            (0, _FIT_FIELD_START_POSITION_LAT), (1, _FIT_FIELD_START_POSITION_LONG),
-            (2, _FIT_FIELD_END_POSITION_LAT), (3, _FIT_FIELD_END_POSITION_LONG),
-        ]
-    elif msg_num == FIT_MSG_LAP:
-        coord_fields = [
-            (0, _FIT_FIELD_START_POSITION_LAT), (1, _FIT_FIELD_START_POSITION_LONG),
-            (2, _FIT_FIELD_END_POSITION_LAT), (3, _FIT_FIELD_END_POSITION_LONG),
-        ]
-    elif msg_num == FIT_MSG_SESSION:
-        coord_fields = [
-            (0, _FIT_FIELD_START_POSITION_LAT), (1, _FIT_FIELD_START_POSITION_LONG),
-            (4, _FIT_FIELD_NEC_LAT), (5, _FIT_FIELD_NEC_LONG),
-            (6, _FIT_FIELD_SWC_LAT), (7, _FIT_FIELD_SWC_LONG),
-        ]
-    elif msg_num == FIT_MSG_COURSE_POINT:
-        coord_fields = [(0, _FIT_FIELD_POSITION_LAT), (1, _FIT_FIELD_POSITION_LONG)]
-    elif msg_num == FIT_MSG_SEGMENT_POINT:
-        # SegmentPoint: position_lat(0), position_long(1)
-        coord_fields = [(0, _FIT_FIELD_POSITION_LAT), (1, _FIT_FIELD_POSITION_LONG)]
+def _try_int(v):
+    if v is None: return None
+    try: return int(v)
+    except (ValueError, TypeError): return None
 
-    if not coord_fields:
-        return msg_bytes
 
-    # 解析 field 定义
-    field_defs = []
-    offset = 6
-    for _ in range(num_fields):
-        if offset + 3 > len(msg_bytes):
-            break
-        def_num = msg_bytes[offset]
-        size = msg_bytes[offset + 1]
-        base_type = msg_bytes[offset + 2]
-        field_defs.append((def_num, size, base_type, offset + 3))
-        offset += 3
-
-    # 构建 (def_num -> offset_in_data) 映射
-    data_offset = offset
-    def_num_to_offset = {}
-    for def_num, size, base_type, field_offset in field_defs:
-        def_num_to_offset[def_num] = (data_offset, size)
-        data_offset += size
-
-    # Patch 坐标字段
-    result = bytearray(msg_bytes)
-    modified = False
-    for target_def_num, field_const in coord_fields:
-        if target_def_num not in def_num_to_offset:
+def _correct_coords_inplace(d, coord_keys):
+    """对 d 中在 coord_keys 里的字段做 (lat,lon) 配对 gcj2wgs，返回纠偏对数"""
+    fixed = 0
+    pairs = []
+    used = set()
+    for fname in list(d.keys()):
+        if fname in coord_keys and fname.endswith('_lat') and fname not in used:
+            base = fname[:-4]
+            lon_name = base + '_long'
+            if lon_name in d:
+                pairs.append((fname, lon_name))
+                used.add(fname)
+                used.add(lon_name)
+    if 'position_lat' in d and 'position_long' in d and ('position_lat', 'position_long') not in pairs:
+        pairs.append(('position_lat', 'position_long'))
+    for lat_f, lon_f in pairs:
+        lat_v = d[lat_f]
+        lon_v = d[lon_f]
+        lat_deg = _semi_to_deg(lat_v)
+        lon_deg = _semi_to_deg(lon_v)
+        if _out_of_china(lat_deg, lon_deg):
             continue
-        off, size = def_num_to_offset[target_def_num]
-        if size not in (4,):
-            continue  # 坐标字段应为 4 字节 (sint32)
-        val = int.from_bytes(result[off:off + size], 'little', signed=True)
-        if val == -2147483648:  # 生效标记 null
-            continue
-        lat_deg = semicircles_to_degrees(val)
-        # 找配对字段
-        other_def = None
-        if target_def_num in (_FIT_FIELD_POSITION_LAT, _FIT_FIELD_START_POSITION_LAT,
-                               _FIT_FIELD_NEC_LAT, _FIT_FIELD_SWC_LAT):
-            other_def = target_def_num + 1
-        else:
-            other_def = target_def_num - 1
-        if other_def not in def_num_to_offset:
-            continue
-        off2, size2 = def_num_to_offset[other_def]
-        if size2 != 4:
-            continue
-        val2 = int.from_bytes(result[off2:off2 + size2], 'little', signed=True)
-        if val2 == -2147483648:
-            continue
-        lon_deg = semicircles_to_degrees(val2)
-
-        wgs = gcj2wgs(lat_deg, lon_deg)
-        new_lat_semi = degrees_to_semicircles(wgs[0])
-        new_lon_semi = degrees_to_semicircles(wgs[1])
-
-        result[off:off + 4] = new_lat_semi.to_bytes(4, 'little', signed=True)
-        result[off2:off2 + 4] = new_lon_semi.to_bytes(4, 'little', signed=True)
-        modified = True
-
-    return bytes(result) if not modified else bytes(result)
+        wgs_lat, wgs_lon = _gcj2wgs(lat_deg, lon_deg)
+        d[lat_f] = _deg_to_semi(wgs_lat)
+        d[lon_f] = _deg_to_semi(wgs_lon)
+        fixed += 2
+    return fixed
 
 
 def correct_fit_file(input_path, output_path=None):
-    """读取 FIT 文件，修正所有 GCJ-02 坐标为 WGS-84，写入新文件"""
+    """读取 FIT 文件，修正所有 GCJ-02 坐标为 WGS-84，写入新文件（GPX 中介法）。"""
     if output_path is None:
         output_path = input_path + '.corrected.fit'
 
-    with open(input_path, 'rb') as f:
-        data = bytearray(f.read())
+    # convert_types_to_strings=False: 保留 enum 原始 int 值（fitdecode 默认会转 'cycling' 等字符串，
+    # 导致 garmin-fit-sdk Encoder 收不到 sport 字段，最终产物 sport=Other，标题退化）
+    with _fitdecode.FitReader(input_path) as fit:
+        all_frames = list(fit)
 
-    # FIT 文件结构：
-    #   14B header
-    #   ... data ...
-    #   2B CRC
+    encoder = _GarminEncoder()
+    records_written = 0
+    coord_corrected = 0
+    skipped = 0
 
-    if len(data) < 14:
-        raise ValueError("Invalid FIT file: too short")
-
-    # 解析 header
-    header_size = data[0]
-    protocol = data[1]
-    profile = int.from_bytes(data[2:4], 'little')
-    data_size = int.from_bytes(data[4:8], 'little')
-    crc = int.from_bytes(data[12:14], 'little')
-
-    if header_size != 14:
-        raise ValueError(f"Unsupported FIT header size: {header_size}")
-
-    total_size = 14 + data_size + 2
-    if len(data) < total_size:
-        raise ValueError(f"Invalid FIT file: expected {total_size}, got {len(data)}")
-
-    body = data[14:14 + data_size]
-
-    # 遍历消息体，每条消息独立处理
-    new_body_parts = []
-    pos = 0
-    while pos < len(body):
-        if pos + 7 > len(body):
-            break
-        header = body[pos]
-        reserved_endian = body[pos + 1:pos + 3]
-        msg_num = int.from_bytes(body[pos + 3:pos + 5], 'little')
-        num_fields = body[pos + 5]
-
-        # definition message (bit7 of header set)
-        if header & 0x80:
-            # 跳到下一条消息
-            field_def_size = 3  # def_num(1) + size(1) + base_type(1)
-            msg_size = 6 + num_fields * field_def_size
-            new_body_parts.append(body[pos:pos + msg_size])
-            pos += msg_size
+    for frame in all_frames:
+        if frame.frame_type != _fitdecode.FIT_FRAME_DATA:
             continue
 
-        # data message
-        # 计算消息大小
-        field_def_size = 3
-        data_msg_size = 6  # header(1) + reserved/endian(2) + msg_num(2) + num_fields(1)
-        for _ in range(num_fields):
-            data_msg_size += body[pos + 6 + _ * 3 + 1]  # size 字段
+        mesg_type = frame.name
+        if mesg_type not in _HANDLED:
+            skipped += 1
+            continue
 
-        msg_bytes = body[pos:pos + data_msg_size]
-        new_msg = _patch_fit_message(msg_bytes, None)
-        new_body_parts.append(new_msg)
-        pos += data_msg_size
+        d = {'mesg_num': _MESG_NUM[mesg_type]}
 
-    new_body = b''.join(new_body_parts)
-    new_data_size = len(new_body)
-    new_crc = 0
+        for f in frame.fields:
+            if f.value is None:
+                continue
+            if f.name == 'time_created' and isinstance(f.value, _dt):
+                d['time_created'] = _fit_ts(f.value)
+                continue
+            if f.name in ('timestamp', 'start_time', 'local_timestamp') and isinstance(f.value, _dt):
+                d[f.name] = _fit_ts(f.value)
+                continue
+            # 数字字段用 value（scaled，e.g. distance=54424.44m）；enum 字符串（fitdecode 默认把
+            # 'cycling' 这种转字符串）回退 raw_value（= 2）
+            v = _try_int(f.value)
+            if v is not None:
+                d[f.name] = v
+            elif isinstance(f.value, str) and f.raw_value is not None:
+                rv = _try_int(f.raw_value)
+                if rv is not None:
+                    d[f.name] = rv
 
-    # CRC 计算：header + body（不含末尾 CRC）
-    new_crc = _fit_crc_update(new_crc, data[:14])
-    new_crc = _fit_crc_update(new_crc, new_body)
-    new_crc &= 0xFFFF
+        coord_corrected += _correct_coords_inplace(d, _COORD_FIELDS.get(mesg_type, ()))
 
-    # 重建文件
-    new_data = bytearray(data[:12])
-    new_data[4:8] = new_data_size.to_bytes(4, 'little')
-    new_data[12:14] = new_crc.to_bytes(2, 'little')
-    new_data.extend(new_body)
-    new_data.extend(new_crc.to_bytes(2, 'little'))
+        if len(d) > 1:
+            try:
+                encoder.write_mesg(d)
+                if mesg_type == 'record':
+                    records_written += 1
+            except ValueError:
+                # 某些消息字段不识别（如扩展字段），静默跳过
+                pass
+    data = encoder.close()
 
     with open(output_path, 'wb') as f:
-        f.write(new_data)
+        f.write(data)
 
-    corrected_count = 1  # simplified - just flag that we tried
+    print(f'    [纠偏] {records_written} records, {coord_corrected} coords corrected, {skipped} msgs skipped')
     return output_path
 
 
@@ -713,17 +597,20 @@ def get_description(d: dict) -> str:
 
 
 def get_hr_zone(avg_hr, max_hr) -> str:
-    """简单心率区间估算（按最大心率法）"""
+    """心率区间估算（绝对心率阈值法，参考 max_hr=166）
+
+    之前的 max_hr 百分比法有 bug：当骑行没达到最大心率时（如 max_hr=154），
+    avg_hr 134 会被算成 87% → Z4 阈值（错误）。改用绝对心率阈值。
+    """
     if max_hr <= 0:
         return "未知"
-    pct = avg_hr / max_hr * 100
-    if pct < 60:
+    if avg_hr < 120:
         return "Z1 轻松区"
-    elif pct < 70:
+    elif avg_hr < 140:
         return "Z2 脂肪燃烧区"
-    elif pct < 80:
+    elif avg_hr < 152:
         return "Z3 有氧耐力区"
-    elif pct < 90:
+    elif avg_hr < 164:
         return "Z4 乳酸阈值区"
     else:
         return "Z5 最大摄氧区"

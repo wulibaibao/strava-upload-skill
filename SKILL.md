@@ -2,7 +2,7 @@
 name: strava-upload
 description: 上传 FIT 文件到 Strava，支持自动刷新 token、activity_type 指定、活动名和描述。触发词：上传到Strava、上传FIT文件、strava上传。直接传入 fit 文件路径即可，不支持 GPX。
 license: MIT
-version: 1.3.0
+version: 1.4.0
 ---
 
 # Strava FIT 文件上传
@@ -215,7 +215,7 @@ encoder.write_mesg({'mesg_num': mesg_name_to_num['record'], 'position_lat': semi
 - "GPS 当 GCJ-02 vs GCJ-02 路网" 中位偏差骤降到 < 10m
 → **确诊 GPS 输出 GCJ-02**
 
-**注意（06-01 用户偏好）：** 用户说"不需要再管偏移了"——**默认情况下不主动分析 GPS 漂移**，直接上传。但用户**主动反馈"路线不对"/"位置不对"/"固定偏移"**时仍需做 OSM + GCJ-02 双向验证（这是 30 秒内就能排除主要假阳性的方法）。
+**注意（06-04 用户偏好）：** 用户更新码表版本后明确"以后默认按纠偏处理"——**每次上传都加 `--correct-coords` 标志**，不再询问。**仅当用户主动反馈"路线不对"且纠偏后仍偏**时才进入 OSM 双向验证流程（30 秒内能排除主要假阳性）。
 
 ### QQ 附件缓存位置（关键！）
 
@@ -357,13 +357,17 @@ def semicircles_to_deg(s):
 # 简化：s / (2**31/180) 也行（精度够用）
 ```
 
-## 收到 FIT 附件后的工作流程（06-01 更新：默认不做偏移诊断）
+## 收到 FIT 附件后的工作流程（06-04 修订：默认 `--correct-coords` 纠偏后上传）
 
-**06-01 起新工作流（用户偏好）：** 用户说"不需要再管偏移了" → 默认直接上传，不再做 spread/聚类/异常点分析。
+**06-04 起新工作流（用户更新码表版本后）：** 用户明确说"码表版本更新了，以后默认按纠偏处理" → **每次上传都加 `--correct-coords` 标志**，不要先传干净版再问用户。
 
 1. **QQ 附件找到**：`cp ~/.hermes/cache/documents/doc_<uuid>_qqdownloadftnv5 /home/agentuser/strava-uploads/xxx.fit`
-2. **直接上传**：`python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit Ride`
+2. **纠偏后上传**：`python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit Ride --correct-coords`
 3. **抓取活动详情报告**（距离/时间/爬升/均速/起点终点）
+
+**历史规则（已作废）：** 06-01~06-02 期间用户曾说"不需要再管偏移了"采用默认直传，06-04 修订。
+
+**纠偏流程实操（06-04 上线）：** 脚本内 `correct_fit_file()` 默认走 GPX 中介法（fitdecode 读 + garmin-fit-sdk Encoder 重建），独立可复现脚本 `scripts/correct_fit_gpx.py`。前提是先在 Strava 网页删掉原活动（API 无 delete 权限），否则会被判 duplicate。
 
 **仅当用户明确说"路线不对"或"地图偏移"时**，才进入诊断流程（见下「旧的 GPS 诊断工作流」）。
 
@@ -416,6 +420,6 @@ if timestamps:
 - ~~`references/magene-c706-gps-drift.md`~~ — **已删除（2026-06-01 归档）**：原文档基于错误的 "MAGENE C706 输出 WGS-84" 假设，整篇结论与新发现矛盾。被 `references/magene-c706-gcj02-offset.md` 完整覆盖。
 - `references/magene-c706-gcj02-offset.md` — GCJ-02 系统偏移识别（**2026-06-01 推翻重写**：MAGENE C706 实际输出 GCJ-02，路线恒定方向偏 470-490m；OSM 双向验证是最可靠的诊断方法）
 - `scripts/detect_gcj02_offset.py` — **🆕 GCJ-02 偏移一键诊断（2026-06-01）**：OSM 路网双向投影（WGS-84 vs GCJ-02），输出中位偏差对比。5-10 分钟给出明确结论。用法：`python3 scripts/detect_gcj02_offset.py <file.fit>`
-- `references/strava-gcj02-wgs84-correction.md` — ✅ **新增（2026-05-31 验证）**：复刻 [xqdoo00o/strava_auto](https://github.com/xqdoo00o/strava_auto) 的 GCJ-02→WGS-84 迭代纠偏算法（outOfChina 边界 + _transform + _delta + gcj2wgs），以及 FIT 二进制坐标 patch（Record/Lap/Session/CoursePoint/SegmentPoint）、CRC-16 重建、gzip 压缩上传完整实现
+- `references/strava-gcj02-wgs84-correction.md` — ✅ **重写（2026-06-04）**：GCJ-02→WGS-84 算法本身仍来自 [xqdoo00o/strava_auto](https://github.com/xqdoo00o/strava_auto) 的迭代纠偏（outOfChina 边界 + transform + delta + gcj2wgs），**但放弃了 binary patch 路线**——实测 06-04 验证 `correct_fit_file` 原 binary patch 实现识别不出 FIT data message（data message 不含 msg_num/num_fields 字段，binary parser 误读），纠偏从未生效。**当前用 GPX 中介法**（fitdecode 读 + Encoder 重建），实测 06-04 06:00 纠偏上传成功，起点向西偏 ~400m（与 5/30 验证方向一致）。详见 `scripts/correct_fit_gpx.py`（独立可复现脚本）。
 - `references/hr-zone-absolute-threshold.md` — **🆕 心率区间绝对阈值法（2026-06-02 修订）**：从 max_hr 百分比法改为绝对阈值（120/140/152/164）的原因、bug 案例、修正方法、版本历史。判断心率区间前先看这个
 - `references/fit-method-comparison.md` — ✅ **新增（2026-06-01）**：三种 FIT 修复方法（binary patch / fit-tool update / GPX 中介法）的决策树。给出偏移类型→方法映射、各方法优缺点、决策流程。**遇到 GPS 偏移问题先看这个，再选具体 reference**
