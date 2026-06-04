@@ -2,7 +2,7 @@
 name: strava-upload
 description: 上传 FIT 文件到 Strava，支持自动刷新 token、activity_type 指定、活动名和描述。触发词：上传到Strava、上传FIT文件、strava上传。直接传入 fit 文件路径即可，不支持 GPX。
 license: MIT
-version: 1.4.0
+version: 1.4.1
 ---
 
 # Strava FIT 文件上传

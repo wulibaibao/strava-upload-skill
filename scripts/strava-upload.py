@@ -694,6 +694,7 @@ def upload_fit(access_token, fit_path, activity_type, name, description):
     else:
         print(f"[i] 活动 ID 暂时未知（后台处理中）")
 
+    final_activity_id = activity_id
     if upload_id:
         print("[i] 等待后台处理...")
         for i in range(12):
@@ -705,8 +706,12 @@ def upload_fit(access_token, fit_path, activity_type, name, description):
             a = sd.get("activity_id")
             s = sd.get("status", "")
             print(f"    [{i+1}] {s}" + (f" → https://www.strava.com/activities/{a}" if a else ""))
+            if a:
+                final_activity_id = a
             if a or sd.get("error"):
                 break
+
+    return final_activity_id
 
 
 def main():
@@ -783,7 +788,29 @@ def main():
         print("[*] Token 已过期，刷新中...")
         access_token = refresh_access_token()
 
-    upload_fit(access_token, fit_path, activity_type, title, desc)
+    activity_id = upload_fit(access_token, fit_path, activity_type, title, desc)
+
+    # 06-04 修订：如果用 --correct-coords 纠偏上传，纠偏产物 FIT 的 speed/distance 等 scaled 字段
+    # 会被 garmin-fit-sdk Encoder 丢精度（fitdecode 给的是 scaled float，Encoder 写的是 unscaled int），
+    # 上传到 Strava 后 description 里"平均速度/最高速度"会显示成 30.7/43.2 而不是顽鹿显示的 32.6/46.7。
+    # 解决：纠偏脚本把原文件备份成 .orig，这里用 .orig 重新 parse_fit + get_description，PATCH 活动。
+    orig_path = fit_path + '.orig'
+    if activity_id and args.correct_coords and os.path.exists(orig_path):
+        try:
+            d_orig = parse_fit(orig_path)
+            desc_orig = get_description(d_orig)
+            patch_resp = requests.patch(
+                f"https://www.strava.com/api/v3/activities/{activity_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={"description": desc_orig},
+                timeout=15,
+            )
+            if patch_resp.status_code == 200:
+                print(f"[√] description 已用 .orig 原始数据 PATCH（速度/距离精度修复）")
+            else:
+                print(f"[!] description PATCH 失败: HTTP {patch_resp.status_code}")
+        except Exception as e:
+            print(f"[!] description PATCH 异常: {e}")
 
 
 if __name__ == "__main__":
