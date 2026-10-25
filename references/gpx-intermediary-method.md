@@ -23,6 +23,7 @@ Encoder 直接写入 metadata 时遇到以下错误，改为 GPX 中介路径：
 ## Step 1: fitdecode 提取 record（含 semicircles）
 
 ```python
+import os
 import fitdecode
 
 with fitdecode.FitReader(orig_path) as reader:
@@ -213,7 +214,7 @@ Strava 收到含 distance 的 FIT 后**直接使用字段值，不重新计算�
 ```python
 import requests, json
 
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 r = requests.get(f'https://www.strava.com/api/v3/activities/{activity_id}', headers=headers)
 a = r.json()

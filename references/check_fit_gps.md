@@ -5,7 +5,7 @@
 ## 使用方法
 
 ```bash
-python3 /home/agentuser/.hermes/skills/productivity/strava-upload/references/check_fit_gps.py <file.fit>
+python3 ~/.hermes/skills/productivity/strava-upload/references/check_fit_gps.py <file.fit>
 ```
 
 ## 脚本内容

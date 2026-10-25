@@ -5,6 +5,13 @@ license: MIT
 version: 1.4.1
 ---
 
+> ⚠️ **本仓库已归档，停止维护。**
+>
+> 完整版本已迁移到 → **https://github.com/wulibaibao/cycling-source-upload-kit**
+>
+> 新版包含本仓库全部内容，并新增：Strava→行者(XOSS) 与 迈金→IGPSPORT 两条同步链路、
+> 坐标系投票判定、三层去重闸门、token 自动续期。
+> 本仓库仅作历史存档保留。
 # Strava FIT 文件上传
 
 上传 FIT 文件到 Strava，支持自动刷新 token、activity_type 指定、活动名和描述。
@@ -12,7 +19,7 @@ version: 1.4.1
 ## 使用方法
 
 ```bash
-python3 /home/agentuser/strava-upload.py <fit文件路径> [activity_type] [title] [--correct-coords]
+python3 ~/strava-upload.py <fit文件路径> [activity_type] [title] [--correct-coords]
 ```
 
 **参数说明：**
@@ -52,8 +59,9 @@ pip install requests -q --break-system-packages
 
 **修改已上传活动的标题：**
 ```python
+import os
 import json, requests
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 r = requests.patch(
     f'https://www.strava.com/api/v3/activities/{activity_id}',
     headers={'Authorization': f'Bearer {tok["access_token"]}'},
@@ -70,7 +78,7 @@ r = requests.patch(
 
 ```python
 import json, requests
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 
 # 从 strava-upload.py 重跑分析得出新标题，然后批量改
@@ -94,7 +102,7 @@ for aid, new_name in fixes:
 
 ```python
 import json, requests
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 r = requests.get(f'https://www.strava.com/api/v3/activities/{activity_id}', headers=headers)
 a = r.json()
@@ -127,7 +135,7 @@ Strava 重复检测逻辑：即使返回 `error: "duplicate of /activities/XXX"`
 **判断是否已上传：**
 ```python
 import json, requests
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 resp = requests.get(f'https://www.strava.com/api/v3/uploads/{upload_id}', headers=headers)
 data = resp.json()
@@ -226,7 +234,7 @@ encoder.write_mesg({'mesg_num': mesg_name_to_num['record'], 'position_lat': semi
 见 `references/fit-rebuild-encoder.md` — 用 fitdecode 读取 + garmin-fit-sdk Encoder 重建，绕过 external_id 重复检测。
 
 1. 删除 Strava 上原有的问题活动（API 无 delete 权限，需网页操作）
-2. 用 `/home/agentuser/convert_fit_encoder.py` 重建 FIT 文件（venv python：`/home/agentuser/.hermes/hermes-agent/venv/bin/python`）
+2. 用 `~/convert_fit_encoder.py` 重建 FIT 文件（venv python：`~/.hermes/hermes-agent/venv/bin/python`）
 3. 上传到 Strava
 
 **2026-06-01 新增更简单方案：** 用 `fit-tool` 直接 patch 原始 FIT 文件的 record 坐标（保留所有元数据），无需重建：
@@ -263,19 +271,19 @@ QQ 发来的 FIT 文件**不**在 strava-uploads 目录，而是缓存在：
 
 收到 [Attachment: xxx.fit] 后从这里复制到工作目录：
 ```bash
-cp ~/.hermes/cache/documents/doc_<uuid>_qqdownloadftnv5 /home/agentuser/strava-uploads/xxx.fit
+cp ~/.hermes/cache/documents/doc_<uuid>_qqdownloadftnv5 ~/strava-uploads/xxx.fit
 ```
 
 **注意：文件可能已存在**（用户重复发送/会话刷新），复制前用 `ls -la` 看时间戳确认。
 
 然后用脚本上传：
 ```bash
-python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit Ride
+python3 ~/strava-upload.py ~/strava-uploads/xxx.fit Ride
 ```
 
 ## 脚本路径
 
-`/home/agentuser/strava-upload.py`
+`~/strava-upload.py`
 
 ## Skill 打包导出（2026-06-01）
 
@@ -361,8 +369,8 @@ def semicircles_to_deg(s):
 
 **06-04 起新工作流（用户更新码表版本后）：** 用户明确说"码表版本更新了，以后默认按纠偏处理" → **每次上传都加 `--correct-coords` 标志**，不要先传干净版再问用户。
 
-1. **QQ 附件找到**：`cp ~/.hermes/cache/documents/doc_<uuid>_qqdownloadftnv5 /home/agentuser/strava-uploads/xxx.fit`
-2. **纠偏后上传**：`python3 /home/agentuser/strava-upload.py /home/agentuser/strava-uploads/xxx.fit Ride --correct-coords`
+1. **QQ 附件找到**：`cp ~/.hermes/cache/documents/doc_<uuid>_qqdownloadftnv5 ~/strava-uploads/xxx.fit`
+2. **纠偏后上传**：`python3 ~/strava-upload.py ~/strava-uploads/xxx.fit Ride --correct-coords`
 3. **抓取活动详情报告**（距离/时间/爬升/均速/起点终点）
 
 **历史规则（已作废）：** 06-01~06-02 期间用户曾说"不需要再管偏移了"采用默认直传，06-04 修订。

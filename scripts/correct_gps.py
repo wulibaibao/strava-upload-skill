@@ -20,14 +20,14 @@ Offset direction: value is SUBTRACTED from each point (positive = shift "down/le
 The offset signs are derived by: offset = ref_point - current_point.
 
 Requires: garmin-fit-sdk, fitdecode
-  venv: /home/agentuser/.hermes/hermes-agent/venv/bin/python
+  venv: ~/.hermes/hermes-agent/venv/bin/python
 """
 import sys
 from garmin_fit_sdk import Decoder, Encoder
 from garmin_fit_sdk.stream import Stream
 
-IN_PATH  = sys.argv[1] if len(sys.argv) > 1 else '/home/agentuser/.hermes/cache/documents/MAGENE_C706_2026-05-30_063250_470592_WGS84.fit'
-OUT_PATH = sys.argv[2] if len(sys.argv) > 2 else '/home/agentuser/.hermes/cache/documents/MAGENE_C706_2026-05-30_063250_470592_corrected.fit'
+IN_PATH  = sys.argv[1] if len(sys.argv) > 1 else '~/.hermes/cache/documents/MAGENE_C706_2026-05-30_063250_<DEVICE_UID>_WGS84.fit'
+OUT_PATH = sys.argv[2] if len(sys.argv) > 2 else '~/.hermes/cache/documents/MAGENE_C706_2026-05-30_063250_<DEVICE_UID>_corrected.fit'
 OFF_LAT  = float(sys.argv[3]) if len(sys.argv) > 3 else -0.0109
 OFF_LON  = float(sys.argv[4]) if len(sys.argv) > 4 else -0.0065
 

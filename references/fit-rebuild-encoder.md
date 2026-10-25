@@ -78,15 +78,15 @@ def speed_to_uint16(ms):
 
 ## 脚本路径
 
-`/home/agentuser/convert_fit_encoder.py`
+`~/convert_fit_encoder.py`
 
 ## venv 路径
 
-`/home/agentuser/.hermes/hermes-agent/venv/bin/python`
+`~/.hermes/hermes-agent/venv/bin/python`
 
 ## 依赖安装
 
 ```bash
-/home/agentuser/.hermes/hermes-agent/venv/bin/pip install garmin-fit-sdk --break-system-packages
-/home/agentuser/.hermes/hermes-agent/venv/bin/pip install fitdecode --break-system-packages
+~/.hermes/hermes-agent/venv/bin/pip install garmin-fit-sdk --break-system-packages
+~/.hermes/hermes-agent/venv/bin/pip install fitdecode --break-system-packages
 ```

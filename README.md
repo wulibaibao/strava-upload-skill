@@ -1,8 +1,16 @@
+> ⚠️ **本仓库已归档，停止维护。**
+>
+> 完整版本已迁移到 → **https://github.com/wulibaibao/cycling-source-upload-kit**
+>
+> 新版包含本仓库全部内容，并新增：Strava→行者(XOSS) 与 迈金→IGPSPORT 两条同步链路、
+> 坐标系投票判定、三层去重闸门、token 自动续期。
+> 本仓库仅作历史存档保留。
+
 # strava-upload Skill（导出版 · 2026-06-01）
 
 完整打包 FIT → Strava 工作流。包含**主上传脚本**、**GPS 漂移修复方案**、**GCJ-02 纠偏**、**GPX 中介法**等全部实战经验。
 
-> 仓库地址：https://github.com/wulibaibao/strava-upload-skill
+> 仓库地址：https://github.com/<your-username>/strava-upload-skill
 >
 > **MAGENE C706 实测输出 GCJ-02**（不是 WGS-84）— 见 `references/magene-c706-gcj02-offset.md`
 

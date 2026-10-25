@@ -5,7 +5,7 @@
 ```python
 import json, requests
 
-TOKEN_FILE = '/home/agentuser/.hermes/strava_token.json'
+TOKEN_FILE = '~/.hermes/strava_token.json'
 tok = json.load(open(TOKEN_FILE))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 
@@ -34,7 +34,7 @@ print(json.dumps(data, indent=2, ensure_ascii=False))
 
 ```python
 import json, requests
-TOKEN_FILE = '/home/agentuser/.hermes/strava_token.json'
+TOKEN_FILE = '~/.hermes/strava_token.json'
 tok = json.load(open(TOKEN_FILE))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 

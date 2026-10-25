@@ -82,8 +82,9 @@ def get_hr_zone(avg_hr, max_hr) -> str:
 
 修正代码：
 ```python
+import os
 import json, requests
-tok = json.load(open('/home/agentuser/.hermes/strava_token.json'))
+tok = json.load(open(os.path.expanduser('~/.hermes/strava_token.json')))
 headers = {'Authorization': f'Bearer {tok["access_token"]}'}
 r = requests.patch(f'https://www.strava.com/api/v3/activities/{aid}',
                    headers=headers, json={'name': new_name})

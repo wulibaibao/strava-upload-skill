@@ -22,7 +22,7 @@
 ### 1. 装依赖（注意 venv 位置）
 
 ```bash
-# 当前环境 venv 在 /home/agentuser/.hermes/hermes-agent/venv/
+# 当前环境 venv 在 ~/.hermes/hermes-agent/venv/
 # 不能用系统的 pip，否则装到 ~/.local/ 找不到
 python3 -m pip install shapely --quiet
 # osmnx 下载极慢（依赖太多），不装。直接用 Overpass HTTP API

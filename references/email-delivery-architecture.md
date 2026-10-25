@@ -30,7 +30,7 @@ class EmailAdapter:
 ```
 
 cron 任务调度时，agent 会**显式注入** config.yaml 顶层的 `email.*` 到 EmailAdapter 构造函数。  
-所以 `deliver: email` 的 cron job 走这条路径 → 实际可送达用户邮箱（wulibaibao@163.com）。
+所以 `deliver: email` 的 cron job 走这条路径 → 实际可送达用户邮箱（<your-email@example.com>）。
 
 ## 实际部署
 
@@ -39,7 +39,7 @@ cron 任务调度时，agent 会**显式注入** config.yaml 顶层的 `email.*`
 - 它的 `deliver` 字段是 `email`
 - prompt 让 agent 汇总 → 直接渲染成 HTML 邮件 → 走 EmailAdapter
 
-用户说"你不是每天能发邮件给 wulibaibao@163.com 吗"指的就是这个机制。  
+用户说"你不是每天能发邮件给 <your-email@example.com> 吗"指的就是这个机制。  
 **不是 send_message 工具的 email target**——那个在我们的 gateway 配置下走不通。
 
 ## 调试技巧

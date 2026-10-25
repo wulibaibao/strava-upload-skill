@@ -38,7 +38,7 @@ ACTIVITY_TYPES = ["Run", "Ride", "Swim", "Walk", "Hike", "Workout", "WeightTrain
 # 用 fitdecode 解析原 FIT → 对每条 record/session/lap 的 position_lat/long 做 gcj2wgs 转换
 # → 用 garmin-fit-sdk Encoder 重建 FIT。绕开 binary patch 字节解析（06-04 验证：FIT data
 # message 不含 msg_num/num_fields 字段，binary parser 根本无法正确识别 record 消息类型）。
-# 副本独立维护在 /home/agentuser/correct_fit_gpx.py（06-04 验证用），主流程统一调用本函数。
+# 副本独立维护在 ~/correct_fit_gpx.py（06-04 验证用），主流程统一调用本函数。
 
 import math as _math
 from datetime import datetime as _dt, timezone as _tz
